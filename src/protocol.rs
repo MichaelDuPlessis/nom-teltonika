@@ -209,4 +209,46 @@ pub enum AVLEventIOValue {
     U64(u64),
     #[cfg_attr(feature = "serde", serde(with = "serde_bytes"))]
     Variable(Vec<u8>),
+    Beacon(BeaconData),
+}
+
+/// Beacon data for AVL IDs 385, 10828, 10829, 10831
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BeaconData {
+    pub beacons: Vec<BeaconRecord>,
+}
+
+/// Individual beacon record
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BeaconRecord {
+    pub beacon_type: BeaconType,
+    pub beacon_id: BeaconId,
+    pub rssi: i8,
+    pub parameters: Vec<BeaconParameter>,
+}
+
+/// Beacon type from flags
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum BeaconType {
+    Eddystone,
+    IBeacon,
+}
+
+/// Beacon identifier
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum BeaconId {
+    Eddystone { namespace: [u8; 10], instance: [u8; 6] },
+    IBeacon { uuid: [u8; 16], major: u16, minor: u16 },
+}
+
+/// Additional beacon parameters
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BeaconParameter {
+    pub id: u8,
+    pub value: Vec<u8>,
 }

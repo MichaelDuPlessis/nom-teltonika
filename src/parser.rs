@@ -149,9 +149,17 @@ fn io_events<'a>(
             codec == Codec::C8Ext,
             length_count(
                 event_count(codec),
-                event(codec, length_count(event_count(codec), be_u8)).map(|(id, val)| AVLEventIO {
-                    id,
-                    value: AVLEventIOValue::Variable(val),
+                event(codec, length_count(event_count(codec), be_u8)).map(|(id, val)| {
+                    let value = match id {
+                        385 | 10828 | 10829 | 10831 => {
+                            match parse_beacon_data(&val) {
+                                Ok((_, beacon_data)) => AVLEventIOValue::Beacon(beacon_data),
+                                Err(_) => AVLEventIOValue::Variable(val),
+                            }
+                        }
+                        _ => AVLEventIOValue::Variable(val),
+                    };
+                    AVLEventIO { id, value }
                 }),
             ),
         )(input)?;
@@ -275,6 +283,74 @@ pub fn udp_datagram(input: &[u8]) -> IResult<&[u8], AVLDatagram> {
             records,
         },
     ))
+}
+
+/// Parse beacon data from variable IO
+fn parse_beacon_data(input: &[u8]) -> IResult<&[u8], BeaconData> {
+    let (input, _constant) = be_u8(input)?;
+    let mut beacons = Vec::new();
+    let mut remaining = input;
+
+    while !remaining.is_empty() {
+        let (input, beacon) = parse_beacon_record(remaining)?;
+        beacons.push(beacon);
+        remaining = input;
+    }
+
+    Ok((remaining, BeaconData { beacons }))
+}
+
+/// Parse individual beacon record
+fn parse_beacon_record(input: &[u8]) -> IResult<&[u8], BeaconRecord> {
+    let (input, data_length) = be_u8(input)?;
+    let (input, beacon_data) = take(data_length)(input)?;
+    
+    let (beacon_data, _rssi_param_id) = be_u8(beacon_data)?;
+    let (beacon_data, _rssi_length) = be_u8(beacon_data)?;
+    let (beacon_data, rssi) = be_u8(beacon_data)?;
+    let rssi = rssi as i8;
+
+    let (beacon_data, _id_param_id) = be_u8(beacon_data)?;
+    let (beacon_data, id_length) = be_u8(beacon_data)?;
+    let (beacon_data, beacon_id_data) = take(id_length)(beacon_data)?;
+
+    let (beacon_type, beacon_id) = match id_length {
+        16 => {
+            let namespace = beacon_id_data[0..10].try_into().unwrap();
+            let instance = beacon_id_data[10..16].try_into().unwrap();
+            (BeaconType::Eddystone, BeaconId::Eddystone { namespace, instance })
+        }
+        20 => {
+            let uuid = beacon_id_data[0..16].try_into().unwrap();
+            let major = u16::from_be_bytes([beacon_id_data[16], beacon_id_data[17]]);
+            let minor = u16::from_be_bytes([beacon_id_data[18], beacon_id_data[19]]);
+            (BeaconType::IBeacon, BeaconId::IBeacon { uuid, major, minor })
+        }
+        _ => return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::LengthValue))),
+    };
+
+    let mut parameters = Vec::new();
+    let mut remaining = beacon_data;
+
+    while !remaining.is_empty() {
+        let (input, param_id) = be_u8(remaining)?;
+        let (input, param_length) = be_u8(input)?;
+        let (input, param_value) = take(param_length)(input)?;
+        
+        parameters.push(BeaconParameter {
+            id: param_id,
+            value: param_value.to_vec(),
+        });
+        
+        remaining = input;
+    }
+
+    Ok((input, BeaconRecord {
+        beacon_type,
+        beacon_id,
+        rssi,
+        parameters,
+    }))
 }
 
 #[cfg(test)]
@@ -706,6 +782,28 @@ mod tests {
         assert_eq!(input, &[]);
         assert_eq!(frame.records[0].longitude, -10.0);
         assert_eq!(frame.records[0].latitude, -25.0);
+    }
+
+    #[test]
+    fn parse_beacon_eddystone() {
+        let input = hex::decode("000000000000004b8e010000018368952793000f0e54fc209ab05800b300b40e00002a4f0001000000000000000000012a4f001e011c0001a40110eb47706aa38255aa96f21a154e2d00550d01000e020bd6010000823f").unwrap();
+        let (input, frame) = tcp_frame(&input).unwrap();
+        assert_eq!(input, &[]);
+        
+        if let AVLEventIOValue::Beacon(beacon_data) = &frame.records[0].io_events[0].value {
+            assert_eq!(beacon_data.beacons.len(), 1);
+            let beacon = &beacon_data.beacons[0];
+            assert_eq!(beacon.beacon_type, BeaconType::Eddystone);
+            assert_eq!(beacon.rssi, -92);
+            if let BeaconId::Eddystone { namespace, instance } = &beacon.beacon_id {
+                assert_eq!(namespace, &[0xeb, 0x47, 0x70, 0x6a, 0xa3, 0x82, 0x55, 0xaa, 0x96, 0xf2]);
+                assert_eq!(instance, &[0x1a, 0x15, 0x4e, 0x2d, 0x00, 0x55]);
+            } else {
+                panic!("Expected Eddystone beacon ID");
+            }
+        } else {
+            panic!("Expected beacon data");
+        }
     }
 
     #[test]

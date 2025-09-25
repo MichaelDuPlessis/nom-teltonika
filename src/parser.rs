@@ -247,7 +247,7 @@ pub fn tcp_frame(input: &[u8]) -> IResult<&[u8], AVLFrame> {
     let (_data, _records_count) = verify(be_u8, |number_of_records| {
         *number_of_records as usize == records.len()
     })(data)?;
-    dbg!(calculated_crc16);
+
     let (input, crc16) = verify(be_u32, |crc16| *crc16 == calculated_crc16 as u32)(input)?;
 
     Ok((
@@ -327,7 +327,7 @@ fn parse_beacon_data_385(input: &[u8]) -> IResult<&[u8], BeaconData> {
 
 /// Parse first beacon record for AVL ID 385 (has data part)
 fn parse_first_beacon_385(input: &[u8]) -> IResult<&[u8], BeaconRecord> {
-    let (input, _data_part) = be_u8(input)?;  // Skip data part
+    let (input, _data_part) = be_u8(input)?; // Skip data part
     parse_beacon_385_common(input)
 }
 
@@ -339,22 +339,30 @@ fn parse_additional_beacon_385(input: &[u8]) -> IResult<&[u8], BeaconRecord> {
 /// Common beacon parsing logic for AVL ID 385
 fn parse_beacon_385_common(input: &[u8]) -> IResult<&[u8], BeaconRecord> {
     let (input, beacon_flags) = be_u8(input)?;
-    
+
     let (beacon_type, id_length) = match beacon_flags {
         0x01 => (BeaconType::Eddystone, 16u8),
         0x21 => (BeaconType::IBeacon, 20u8),
-        _ => return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Alt))),
+        _ => {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Alt,
+            )))
+        }
     };
-    
+
     let (input, beacon_id_data) = take(id_length)(input)?;
     let (input, rssi) = be_u8(input)?;
     let rssi = rssi as i8;
-    
+
     let beacon_id = match beacon_type {
         BeaconType::Eddystone => {
             let namespace = beacon_id_data[0..10].try_into().unwrap();
             let instance = beacon_id_data[10..16].try_into().unwrap();
-            BeaconId::Eddystone { namespace, instance }
+            BeaconId::Eddystone {
+                namespace,
+                instance,
+            }
         }
         BeaconType::IBeacon => {
             let uuid = beacon_id_data[0..16].try_into().unwrap();
@@ -364,12 +372,15 @@ fn parse_beacon_385_common(input: &[u8]) -> IResult<&[u8], BeaconRecord> {
         }
     };
 
-    Ok((input, BeaconRecord {
-        beacon_type,
-        beacon_id,
-        rssi,
-        parameters: Vec::new(),
-    }))
+    Ok((
+        input,
+        BeaconRecord {
+            beacon_type,
+            beacon_id,
+            rssi,
+            parameters: Vec::new(),
+        },
+    ))
 }
 
 /// Parse individual beacon record
@@ -889,7 +900,13 @@ mod tests {
             assert_eq!(beacon.beacon_type, BeaconType::IBeacon);
             assert_eq!(beacon.rssi, -65);
             if let BeaconId::IBeacon { uuid, major, minor } = &beacon.beacon_id {
-                assert_eq!(uuid, &[0x6B, 0x81, 0x7F, 0x8A, 0x27, 0x4D, 0x4F, 0xBD, 0xB6, 0x2D, 0x33, 0xE1, 0x84, 0x2F, 0x8D, 0xF8]);
+                assert_eq!(
+                    uuid,
+                    &[
+                        0x6B, 0x81, 0x7F, 0x8A, 0x27, 0x4D, 0x4F, 0xBD, 0xB6, 0x2D, 0x33, 0xE1,
+                        0x84, 0x2F, 0x8D, 0xF8
+                    ]
+                );
                 assert_eq!(*major, 0x014D);
                 assert_eq!(*minor, 0x022B);
             } else {
@@ -905,14 +922,21 @@ mod tests {
         let input = hex::decode("000000000000004b8e010000018368952793000f0e54fc209ab05800b300b40e00002a4f0001000000000000000000012a4f001e011c0001a40110eb47706aa38255aa96f21a154e2d00550d01000e020bd6010000823f").unwrap();
         let (input, frame) = tcp_frame(&input).unwrap();
         assert_eq!(input, &[]);
-        
+
         if let AVLEventIOValue::Beacon(beacon_data) = &frame.records[0].io_events[0].value {
             assert_eq!(beacon_data.beacons.len(), 1);
             let beacon = &beacon_data.beacons[0];
             assert_eq!(beacon.beacon_type, BeaconType::Eddystone);
             assert_eq!(beacon.rssi, -92);
-            if let BeaconId::Eddystone { namespace, instance } = &beacon.beacon_id {
-                assert_eq!(namespace, &[0xeb, 0x47, 0x70, 0x6a, 0xa3, 0x82, 0x55, 0xaa, 0x96, 0xf2]);
+            if let BeaconId::Eddystone {
+                namespace,
+                instance,
+            } = &beacon.beacon_id
+            {
+                assert_eq!(
+                    namespace,
+                    &[0xeb, 0x47, 0x70, 0x6a, 0xa3, 0x82, 0x55, 0xaa, 0x96, 0xf2]
+                );
                 assert_eq!(instance, &[0x1a, 0x15, 0x4e, 0x2d, 0x00, 0x55]);
             } else {
                 panic!("Expected Eddystone beacon ID");

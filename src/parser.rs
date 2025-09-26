@@ -308,32 +308,20 @@ fn parse_beacon_data_385(input: &[u8]) -> IResult<&[u8], BeaconData> {
     let mut beacons = Vec::new();
     let mut remaining = input;
 
-    // Parse first beacon (has data part + beacon flags)
+    // Skip the initial data part byte
     if !remaining.is_empty() {
-        let (input, beacon) = parse_first_beacon_385(remaining)?;
-        beacons.push(beacon);
+        let (input, _data_part) = be_u8(remaining)?;
         remaining = input;
     }
 
-    // Parse additional beacons (only beacon flags, no data part)
+    // Parse beacons (all have beacon flags, no additional data part bytes)
     while !remaining.is_empty() {
-        let (input, beacon) = parse_additional_beacon_385(remaining)?;
+        let (input, beacon) = parse_beacon_385_common(remaining)?;
         beacons.push(beacon);
         remaining = input;
     }
 
     Ok((remaining, BeaconData { beacons }))
-}
-
-/// Parse first beacon record for AVL ID 385 (has data part)
-fn parse_first_beacon_385(input: &[u8]) -> IResult<&[u8], BeaconRecord> {
-    let (input, _data_part) = be_u8(input)?; // Skip data part
-    parse_beacon_385_common(input)
-}
-
-/// Parse additional beacon records for AVL ID 385 (no data part)
-fn parse_additional_beacon_385(input: &[u8]) -> IResult<&[u8], BeaconRecord> {
-    parse_beacon_385_common(input)
 }
 
 /// Common beacon parsing logic for AVL ID 385

@@ -312,9 +312,16 @@ fn parse_beacon_data_385(input: &[u8]) -> IResult<&[u8], BeaconData> {
     if !remaining.is_empty() {
         let (input, _data_part) = be_u8(remaining)?;
         remaining = input;
+        
+        // Parse first beacon
+        if !remaining.is_empty() {
+            let (input, beacon) = parse_beacon_385_common(remaining)?;
+            beacons.push(beacon);
+            remaining = input;
+        }
     }
 
-    // Parse beacons (all have beacon flags, no additional data part bytes)
+    // Parse additional beacons (no data part byte)
     while !remaining.is_empty() {
         let (input, beacon) = parse_beacon_385_common(remaining)?;
         beacons.push(beacon);
